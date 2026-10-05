@@ -3,12 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Santiago Store - Digital Services & Virtual Numbers Platform</title>
+    <title>Santiago Store - Digital Services & Virtual Numbers Platform (Supabase Live)</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Inter Font & Lucide Icons -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Supabase JS SDK CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script>
         tailwind.config = {
             theme: {
@@ -62,6 +64,76 @@
 
     <div id="toast-container" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2 pointer-events-none"></div>
 
+    <!-- SQL SETUP NOTICE MODAL (Helps user set up tables easily) -->
+    <div id="sql-modal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-slate-900 w-full max-w-2xl rounded-3xl p-8 shadow-2xl border border-slate-800 space-y-6 relative fade-in max-h-[90vh] overflow-y-auto">
+            <button onclick="closeSqlModal()" class="absolute top-6 right-6 text-slate-400 hover:text-white">
+                <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
+            <div class="space-y-2">
+                <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-semibold">
+                    <i data-lucide="database" class="w-3.5 h-3.5"></i> Supabase Database Setup Required
+                </div>
+                <h3 class="text-xl font-bold text-white">Initialize Your Supabase Tables</h3>
+                <p class="text-xs text-slate-400">Run this SQL script in your Supabase SQL Editor (<a href="https://supabase.com/dashboard/project/enoycuwdpqyaxwzxocdz/sql/new" target="_blank" class="text-emerald-400 underline">Open SQL Editor</a>) to create the required tables and trigger for automated user profiles.</p>
+            </div>
+            <div class="relative">
+                <pre class="bg-slate-950 p-4 rounded-2xl border border-slate-800 text-xs font-mono text-emerald-300 overflow-x-auto select-all"><code>-- 1. Profiles Table (linked to Supabase Auth users)
+create table if not exists public.profiles (
+    id uuid references auth.users on delete cascade primary key,
+    name text,
+    email text,
+    balance numeric default 12500.00,
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- 2. Orders Table
+create table if not exists public.orders (
+    id uuid default gen_random_uuid() primary key,
+    user_id uuid references public.profiles(id) on delete cascade not null,
+    order_number text not null,
+    service_name text not null,
+    target_info text not null,
+    sms_otp text default 'Waiting for OTP...',
+    price numeric not null,
+    status text default 'Pending',
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- 3. Enable RLS and setup policies
+alter table public.profiles enable row level security;
+alter table public.orders enable row level security;
+
+create policy "Public profiles are viewable by everyone." on public.profiles for select using (true);
+create policy "Users can update own profile." on public.profiles for update using (auth.uid() = id);
+create policy "Users can view own orders." on public.orders for select using (auth.uid() = user_id);
+create policy "Users can insert own orders." on public.orders for insert with check (auth.uid() = user_id);
+
+-- 4. Trigger to auto-create profile on signup
+create or function public.handle_new_user()
+returns trigger as $$
+begin
+  insert into public.profiles (id, name, email, balance)
+  values (new.id, coalesce(new.raw_user_meta_data->>'name', split_part(new.email, '@', 1)), new.email, 12500.00);
+  return new;
+end;
+$$ language plpgsql security definer;
+
+create or replace trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute procedure public.handle_new_user();</code></pre>
+            </div>
+            <div class="flex justify-end gap-3">
+                <button onclick="copySqlSnippet()" class="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold rounded-xl text-xs border border-slate-700 transition flex items-center gap-2">
+                    <i data-lucide="copy" class="w-4 h-4"></i> Copy SQL Script
+                </button>
+                <button onclick="closeSqlModal()" class="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-xl text-xs transition">
+                    Got It, Continue
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- AUTH / LANDING WRAPPER (Shown when logged out) -->
     <div id="auth-view" class="min-h-screen flex flex-col justify-between bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950">
         <!-- Top Nav -->
@@ -75,6 +147,9 @@
             <div class="flex items-center gap-3">
                 <button onclick="openAuthModal('login')" class="px-4 py-2 text-sm font-medium text-slate-300 hover:text-emerald-400 transition">Sign In</button>
                 <button onclick="openAuthModal('register')" class="px-4 py-2 text-sm font-semibold bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-xl shadow-md shadow-emerald-500/20 transition">Get Started</button>
+                <button onclick="openSqlModal()" title="View Supabase Schema" class="p-2 bg-slate-800 hover:bg-slate-700 text-emerald-400 rounded-xl border border-slate-700">
+                    <i data-lucide="database" class="w-4 h-4"></i>
+                </button>
             </div>
         </header>
 
@@ -82,20 +157,20 @@
         <main class="max-w-7xl mx-auto px-6 py-12 lg:py-20 grid grid-cols-1 lg:grid-cols-12 gap-12 items-center flex-1">
             <div class="lg:col-span-7 space-y-6">
                 <div class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold">
-                    <i data-lucide="shield-check" class="w-3.5 h-3.5"></i> Enterprise Automated Digital Infrastructure
+                    <i data-lucide="shield-check" class="w-3.5 h-3.5"></i> Connected to Supabase Cloud DB
                 </div>
                 <h1 class="text-4xl sm:text-5xl lg:text-6xl font-extrabold text-white tracking-tight leading-tight">
-                    Instant Virtual Numbers & <span class="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-accent-400">Digital Growth</span> Services
+                    Instant Virtual Numbers & <span class="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-accent-400">Digital Growth</span>
                 </h1>
                 <p class="text-lg text-slate-300 max-w-xl">
-                    Reliable SMS verification numbers across 150+ countries and professional, legitimate social-media marketing growth campaigns backed by enterprise APIs and secure wallet funding.
+                    Reliable SMS verification numbers across 150+ countries and professional social-media marketing growth campaigns backed by live Supabase backend and secure wallet ledger.
                 </p>
                 <div class="flex flex-wrap gap-4 pt-2">
                     <button onclick="openAuthModal('register')" class="px-6 py-3.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-xl shadow-lg shadow-emerald-500/20 flex items-center gap-2 transition">
                         Create Free Account <i data-lucide="arrow-right" class="w-4 h-4"></i>
                     </button>
-                    <button onclick="loginAsDemo()" class="px-6 py-3.5 bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 font-semibold rounded-xl shadow-sm flex items-center gap-2 transition">
-                        <i data-lucide="play-circle" class="w-4 h-4 text-emerald-400"></i> Explore Live Demo
+                    <button onclick="openSqlModal()" class="px-6 py-3.5 bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 font-semibold rounded-xl shadow-sm flex items-center gap-2 transition">
+                        <i data-lucide="database" class="w-4 h-4 text-emerald-400"></i> View Supabase Schema
                     </button>
                 </div>
                 <div class="grid grid-cols-3 gap-6 pt-8 border-t border-slate-800">
@@ -108,8 +183,8 @@
                         <div class="text-xs text-slate-400 font-medium">SMS Delivery Rate</div>
                     </div>
                     <div>
-                        <div class="text-2xl font-extrabold text-white">24/7</div>
-                        <div class="text-xs text-slate-400 font-medium">Automated API Gateway</div>
+                        <div class="text-2xl font-extrabold text-white">Live</div>
+                        <div class="text-xs text-slate-400 font-medium">Supabase RLS Active</div>
                     </div>
                 </div>
             </div>
@@ -120,9 +195,9 @@
                     <div class="flex items-center justify-between pb-4 border-b border-slate-800">
                         <div class="flex items-center gap-3">
                             <div class="w-3 h-3 rounded-full bg-emerald-400 animate-pulse"></div>
-                            <span class="text-sm font-semibold text-slate-200">Live Supplier API Connected</span>
+                            <span class="text-sm font-semibold text-slate-200">Supabase DB Connected</span>
                         </div>
-                        <span class="text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium px-2.5 py-1 rounded-full">Operational</span>
+                        <span class="text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium px-2.5 py-1 rounded-full">Secure Auth</span>
                     </div>
                     <div class="space-y-3">
                         <div class="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-between">
@@ -145,26 +220,16 @@
                             </div>
                             <span class="text-xs font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-lg">₦380.00</span>
                         </div>
-                        <div class="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-between">
-                            <div class="flex items-center gap-3">
-                                <div class="w-9 h-9 rounded-xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center font-bold text-xs border border-indigo-500/20">NG</div>
-                                <div>
-                                    <div class="text-sm font-semibold text-white">Twitter / X Growth Campaign</div>
-                                    <div class="text-xs text-slate-400">Targeted Professional Reach</div>
-                                </div>
-                            </div>
-                            <span class="text-xs font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-lg">₦2,500</span>
-                        </div>
                     </div>
-                    <button onclick="loginAsDemo()" class="w-full py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-xl text-sm transition shadow-lg shadow-emerald-500/10">
-                        Launch Dashboard Prototype
+                    <button onclick="openAuthModal('login')" class="w-full py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-xl text-sm transition shadow-lg shadow-emerald-500/10">
+                        Sign In to Access Dashboard
                     </button>
                 </div>
             </div>
         </main>
 
         <footer class="max-w-7xl mx-auto px-6 py-6 text-center text-xs text-slate-500 border-t border-slate-800/60 w-full">
-            &copy; 2026 Santiago Store Technologies. Secure Full-Stack Prototype. Ready for Supabase & Paystack integration.
+            &copy; 2026 Santiago Store Technologies. Powered by Supabase Backend.
         </footer>
     </div>
 
@@ -203,7 +268,7 @@
                     <div>
                         <div class="font-extrabold text-white">Santiago Store</div>
                         <div class="text-xs text-emerald-400 font-semibold flex items-center gap-1">
-                            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Live API Active
+                            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Supabase Active
                         </div>
                     </div>
                 </div>
@@ -236,10 +301,10 @@
                 </a>
                 <a href="#" onclick="switchTab('orders', event)" class="nav-link flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-slate-400 hover:text-white hover:bg-slate-800/60 transition" data-tab="orders">
                     <i data-lucide="shopping-bag" class="w-5 h-5"></i> Orders History
-                    <span id="orders-badge" class="ml-auto bg-emerald-500/20 text-emerald-400 text-xs px-2 py-0.5 rounded-full font-bold">3</span>
+                    <span id="orders-badge" class="ml-auto bg-emerald-500/20 text-emerald-400 text-xs px-2 py-0.5 rounded-full font-bold">0</span>
                 </a>
                 <a href="#" onclick="switchTab('settings', event)" class="nav-link flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-slate-400 hover:text-white hover:bg-slate-800/60 transition" data-tab="settings">
-                    <i data-lucide="sliders" class="w-5 h-5"></i> API & Gateway Config
+                    <i data-lucide="database" class="w-5 h-5"></i> Supabase & SQL Schema
                 </a>
             </nav>
 
@@ -247,14 +312,14 @@
             <div class="p-4 border-t border-slate-800 flex items-center justify-between">
                 <div class="flex items-center gap-3">
                     <div class="w-9 h-9 rounded-full bg-emerald-500/20 text-emerald-400 font-bold flex items-center justify-center text-sm border border-emerald-500/30" id="user-avatar-initials">
-                        JD
+                        US
                     </div>
                     <div>
-                        <div class="text-sm font-semibold text-white" id="user-display-name">John Doe</div>
-                        <div class="text-xs text-slate-400">Verified User</div>
+                        <div class="text-sm font-semibold text-white truncate max-w-[120px]" id="user-display-name">User</div>
+                        <div class="text-xs text-slate-400">Supabase Auth</div>
                     </div>
                 </div>
-                <button onclick="logout()" title="Sign Out" class="p-2 text-slate-400 hover:text-rose-400 transition">
+                <button onclick="handleSignOut()" title="Sign Out" class="p-2 text-slate-400 hover:text-rose-400 transition">
                     <i data-lucide="log-out" class="w-5 h-5"></i>
                 </button>
             </div>
@@ -293,7 +358,7 @@
                                 <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Wallet Balance</div>
                                 <div id="stat-wallet" class="text-2xl font-extrabold text-white mt-1">₦12,500.00</div>
                                 <div class="text-xs text-emerald-400 font-medium mt-1 flex items-center gap-1">
-                                    <i data-lucide="arrow-up-right" class="w-3 h-3"></i> Ready for orders
+                                    <i data-lucide="arrow-up-right" class="w-3 h-3"></i> Synchronized with DB
                                 </div>
                             </div>
                             <div class="w-12 h-12 rounded-2xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center border border-emerald-500/20">
@@ -303,8 +368,8 @@
 
                         <div class="bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-sm flex items-center justify-between">
                             <div>
-                                <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Active Numbers</div>
-                                <div class="text-2xl font-extrabold text-white mt-1">2 Active</div>
+                                <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Active Orders</div>
+                                <div id="stat-active-orders" class="text-2xl font-extrabold text-white mt-1">0 Active</div>
                                 <div class="text-xs text-accent-400 font-medium mt-1 flex items-center gap-1">
                                     <i data-lucide="clock" class="w-3 h-3"></i> Awaiting SMS code
                                 </div>
@@ -317,9 +382,9 @@
                         <div class="bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-sm flex items-center justify-between">
                             <div>
                                 <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Orders</div>
-                                <div class="text-2xl font-extrabold text-white mt-1">14 Orders</div>
+                                <div id="stat-total-orders" class="text-2xl font-extrabold text-white mt-1">0 Orders</div>
                                 <div class="text-xs text-emerald-400 font-medium mt-1 flex items-center gap-1">
-                                    <i data-lucide="check-circle-2" class="w-3 h-3"></i> 12 Completed
+                                    <i data-lucide="check-circle-2" class="w-3 h-3"></i> Saved in Supabase
                                 </div>
                             </div>
                             <div class="w-12 h-12 rounded-2xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center border border-indigo-500/20">
@@ -329,12 +394,12 @@
 
                         <div class="bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-sm flex items-center justify-between">
                             <div>
-                                <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Supplier API Status</div>
-                                <div class="text-2xl font-extrabold text-emerald-400 mt-1">Online</div>
-                                <div class="text-xs text-slate-400 font-medium mt-1">Latency: 140ms</div>
+                                <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Supabase DB Status</div>
+                                <div class="text-2xl font-extrabold text-emerald-400 mt-1">Connected</div>
+                                <div class="text-xs text-slate-400 font-medium mt-1">RLS Secure</div>
                             </div>
                             <div class="w-12 h-12 rounded-2xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center border border-emerald-500/20">
-                                <i data-lucide="server" class="w-6 h-6"></i>
+                                <i data-lucide="database" class="w-6 h-6"></i>
                             </div>
                         </div>
                     </div>
@@ -343,10 +408,10 @@
                     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                         <div class="lg:col-span-2 bg-gradient-to-r from-emerald-900 via-slate-900 to-accent-950 rounded-3xl p-8 text-white shadow-xl border border-emerald-500/20 flex flex-col justify-between">
                             <div class="space-y-3">
-                                <span class="px-3 py-1 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-full text-xs font-semibold">New Supplier API Added</span>
+                                <span class="px-3 py-1 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-full text-xs font-semibold">Supabase RLS Active</span>
                                 <h2 class="text-2xl font-bold">Automated SMS Verification & Growth</h2>
                                 <p class="text-slate-300 text-sm max-w-lg">
-                                    Connect your custom webhook endpoints or use our built-in Paystack wallet ledger to start purchasing numbers and launching verified social growth campaigns instantly.
+                                    Your account is fully synchronized with Supabase. Any orders placed here are safely stored in your cloud database table with row-level security enabled.
                                 </p>
                             </div>
                             <div class="pt-6 flex flex-wrap gap-3">
@@ -362,25 +427,25 @@
                         <!-- System Status Box -->
                         <div class="bg-slate-900 p-6 rounded-3xl border border-slate-800 shadow-sm flex flex-col justify-between space-y-4">
                             <div>
-                                <h3 class="font-bold text-white text-base mb-1">Gateway Health</h3>
-                                <p class="text-xs text-slate-400">Real-time status of connected upstream providers.</p>
+                                <h3 class="font-bold text-white text-base mb-1">Database Health</h3>
+                                <p class="text-xs text-slate-400">Status of connected Supabase backend instance.</p>
                             </div>
                             <div class="space-y-3">
                                 <div class="flex items-center justify-between text-sm">
-                                    <span class="text-slate-300 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-emerald-400"></span> SMS Provider API</span>
-                                    <span class="font-semibold text-emerald-400">Operational</span>
+                                    <span class="text-slate-300 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-emerald-400"></span> Auth Session</span>
+                                    <span class="font-semibold text-emerald-400">Active</span>
                                 </div>
                                 <div class="flex items-center justify-between text-sm">
-                                    <span class="text-slate-300 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-emerald-400"></span> Paystack Gateway</span>
-                                    <span class="font-semibold text-emerald-400">Connected</span>
+                                    <span class="text-slate-300 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-emerald-400"></span> Profiles Table</span>
+                                    <span class="font-semibold text-emerald-400">Synced</span>
                                 </div>
                                 <div class="flex items-center justify-between text-sm">
-                                    <span class="text-slate-300 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-emerald-400"></span> Supabase RLS DB</span>
+                                    <span class="text-slate-300 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-emerald-400"></span> Orders RLS</span>
                                     <span class="font-semibold text-emerald-400">Secure</span>
                                 </div>
                             </div>
-                            <button onclick="switchTab('settings', event)" class="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium rounded-xl text-xs transition border border-slate-700">
-                                Manage API Keys
+                            <button onclick="openSqlModal()" class="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium rounded-xl text-xs transition border border-slate-700 flex items-center justify-center gap-2">
+                                <i data-lucide="code" class="w-3.5 h-3.5"></i> View SQL Setup Script
                             </button>
                         </div>
                     </div>
@@ -388,23 +453,23 @@
                     <!-- Recent Orders Table Preview -->
                     <div class="bg-slate-900 rounded-3xl border border-slate-800 shadow-sm p-6 space-y-4">
                         <div class="flex items-center justify-between">
-                            <h3 class="font-bold text-white text-lg">Recent Orders</h3>
+                            <h3 class="font-bold text-white text-lg">Recent Orders (Supabase)</h3>
                             <button onclick="switchTab('orders', event)" class="text-xs font-semibold text-emerald-400 hover:underline">View All &rarr;</button>
                         </div>
                         <div class="overflow-x-auto">
                             <table class="w-full text-left text-sm">
                                 <thead class="border-b border-slate-800 text-xs text-slate-400 uppercase font-semibold">
                                     <tr>
-                                        <th class="pb-3">Order ID</th>
+                                        <th class="pb-3">Order Number</th>
                                         <th class="pb-3">Service</th>
-                                        <th class="pb-3">Details / Number</th>
+                                        <th class="pb-3">Target Info / Number</th>
                                         <th class="pb-3">Price</th>
                                         <th class="pb-3">Status</th>
                                         <th class="pb-3 text-right">Action</th>
                                     </tr>
                                 </thead>
                                 <tbody id="recent-orders-table" class="divide-y divide-slate-800/60">
-                                    <!-- Populated dynamically via JS -->
+                                    <!-- Populated dynamically via Supabase -->
                                 </tbody>
                             </table>
                         </div>
@@ -466,13 +531,13 @@
                     <div class="bg-slate-900 p-6 rounded-3xl border border-slate-800 shadow-sm space-y-6">
                         <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
                             <div>
-                                <h2 class="text-xl font-bold text-white">Order History & SMS Codes</h2>
-                                <p class="text-xs text-slate-400">Review your past virtual number purchases and incoming SMS OTP codes.</p>
+                                <h2 class="text-xl font-bold text-white">Order History & SMS Codes (Supabase)</h2>
+                                <p class="text-xs text-slate-400">Review your past virtual number purchases and incoming SMS OTP codes retrieved from Supabase.</p>
                             </div>
                             <div class="flex gap-2">
-                                <button onclick="filterOrders('all')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl border border-slate-700">All</button>
-                                <button onclick="filterOrders('Pending')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl border border-slate-700">Pending</button>
-                                <button onclick="filterOrders('Completed')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl border border-slate-700">Completed</button>
+                                <button onclick="renderOrders('all')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl border border-slate-700">All</button>
+                                <button onclick="renderOrders('Pending')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl border border-slate-700">Pending</button>
+                                <button onclick="renderOrders('Completed')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl border border-slate-700">Completed</button>
                             </div>
                         </div>
 
@@ -480,7 +545,7 @@
                             <table class="w-full text-left text-sm">
                                 <thead class="border-b border-slate-800 text-xs text-slate-400 uppercase font-semibold">
                                     <tr>
-                                        <th class="pb-3">Order ID</th>
+                                        <th class="pb-3">Order Number</th>
                                         <th class="pb-3">Service Name</th>
                                         <th class="pb-3">Assigned Number / Link</th>
                                         <th class="pb-3">SMS Received / OTP</th>
@@ -490,46 +555,35 @@
                                     </tr>
                                 </thead>
                                 <tbody id="full-orders-table" class="divide-y divide-slate-800/60">
-                                    <!-- Populated by JS -->
+                                    <!-- Populated by Supabase -->
                                 </tbody>
                             </table>
                         </div>
                     </div>
                 </div>
 
-                <!-- TAB 5: SETTINGS / API CONFIG -->
+                <!-- TAB 5: SETTINGS / SUPABASE CONFIG -->
                 <div id="tab-settings" class="tab-content hidden space-y-6 fade-in">
                     <div class="bg-slate-900 p-8 rounded-3xl border border-slate-800 shadow-sm max-w-3xl space-y-6">
                         <div>
-                            <h2 class="text-xl font-bold text-white">Supplier API & Payment Gateway Configuration</h2>
-                            <p class="text-xs text-slate-400">Connect your upstream SMS provider API and Paystack secret keys for live server-side execution.</p>
+                            <h2 class="text-xl font-bold text-white">Supabase Configuration & SQL Schema</h2>
+                            <p class="text-xs text-slate-400">Your application is successfully connected to your Supabase project.</p>
                         </div>
 
                         <div class="space-y-4">
                             <div>
-                                <label class="block text-xs font-semibold text-slate-300 uppercase mb-1">Upstream Supplier API Endpoint</label>
-                                <input type="text" value="https://api.upstream-sms-provider.example/v1/" class="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white focus:outline-none focus:border-emerald-500">
-                                <span class="text-[11px] text-slate-500 mt-1 block">Used by Supabase Edge Functions to safely fetch numbers without exposing keys.</span>
+                                <label class="block text-xs font-semibold text-slate-300 uppercase mb-1">Supabase Project URL</label>
+                                <input type="text" readonly value="https://enoycuwdpqyaxwzxocdz.supabase.co" class="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white focus:outline-none">
                             </div>
 
                             <div>
-                                <label class="block text-xs font-semibold text-slate-300 uppercase mb-1">Supplier Secret API Key</label>
-                                <input type="password" value="sk_live_992837482910384756" class="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white focus:outline-none focus:border-emerald-500">
+                                <label class="block text-xs font-semibold text-slate-300 uppercase mb-1">Supabase Anon / Publishable Key</label>
+                                <input type="password" readonly value="sb_publishable_J_pxqtxqkk965jk_XBf5WA_dOxv6Ujx" class="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white focus:outline-none">
                             </div>
 
                             <div class="pt-4 border-t border-slate-800">
-                                <label class="block text-xs font-semibold text-slate-300 uppercase mb-1">Paystack Public Key</label>
-                                <input type="text" value="pk_live_************************" class="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white focus:outline-none focus:border-emerald-500">
-                            </div>
-
-                            <div>
-                                <label class="block text-xs font-semibold text-slate-300 uppercase mb-1">Paystack Secret Key</label>
-                                <input type="password" value="sk_live_************************" class="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white focus:outline-none focus:border-emerald-500">
-                            </div>
-
-                            <div class="pt-4">
-                                <button onclick="saveSettings()" class="px-6 py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-xl text-sm shadow-md shadow-emerald-500/20 transition">
-                                    Save Configuration
+                                <button onclick="openSqlModal()" class="px-6 py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-xl text-sm shadow-md shadow-emerald-500/20 transition flex items-center gap-2">
+                                    <i data-lucide="database" class="w-4 h-4"></i> View Complete Database SQL Schema
                                 </button>
                             </div>
                         </div>
@@ -551,8 +605,8 @@
                 <div class="w-12 h-12 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-2xl mx-auto flex items-center justify-center">
                     <i data-lucide="zap" class="w-6 h-6"></i>
                 </div>
-                <h3 id="auth-modal-title" class="text-xl font-bold text-white">Welcome to Santiago Store</h3>
-                <p id="auth-modal-subtitle" class="text-xs text-slate-400">Sign in to manage your wallet and virtual numbers</p>
+                <h3 id="auth-modal-title" class="text-xl font-bold text-white">Sign In to Santiago Store</h3>
+                <p id="auth-modal-subtitle" class="text-xs text-slate-400">Authenticate securely via Supabase Auth</p>
             </div>
 
             <!-- Tab switcher inside modal -->
@@ -575,7 +629,7 @@
                     <input type="password" id="auth-password" required placeholder="••••••••" class="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white focus:outline-none focus:border-emerald-500">
                 </div>
                 <button type="submit" id="auth-submit-btn" class="w-full py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-xl text-sm shadow-md shadow-emerald-500/20 transition">
-                    Sign In to Dashboard
+                    Sign In with Supabase
                 </button>
             </form>
         </div>
@@ -594,7 +648,7 @@
                 </div>
                 <div>
                     <h3 class="text-lg font-bold text-white">Fund Wallet via Paystack</h3>
-                    <p class="text-xs text-slate-400">Secure instant card or bank transfer deposit</p>
+                    <p class="text-xs text-slate-400">Secure instant deposit updated in Supabase profile</p>
                 </div>
             </div>
 
@@ -602,16 +656,16 @@
                 <div>
                     <label class="block text-xs font-semibold text-slate-300 uppercase mb-1">Select Amount (NGN)</label>
                     <div class="grid grid-cols-3 gap-2 mb-3">
-                        <button onclick="setDepositAmount(2000)" class="py-2.5 bg-slate-950 border border-slate-800 hover:border-emerald-500 font-bold text-sm rounded-xl text-slate-200 transition">₦2,000</button>
-                        <button onclick="setDepositAmount(5000)" class="py-2.5 bg-slate-950 border border-slate-800 hover:border-emerald-500 font-bold text-sm rounded-xl text-slate-200 transition">₦5,000</button>
-                        <button onclick="setDepositAmount(10000)" class="py-2.5 bg-slate-950 border border-slate-800 hover:border-emerald-500 font-bold text-sm rounded-xl text-slate-200 transition">₦10,000</button>
+                        <button type="button" onclick="setDepositAmount(2000)" class="py-2.5 bg-slate-950 border border-slate-800 hover:border-emerald-500 font-bold text-sm rounded-xl text-slate-200 transition">₦2,000</button>
+                        <button type="button" onclick="setDepositAmount(5000)" class="py-2.5 bg-slate-950 border border-slate-800 hover:border-emerald-500 font-bold text-sm rounded-xl text-slate-200 transition">₦5,000</button>
+                        <button type="button" onclick="setDepositAmount(10000)" class="py-2.5 bg-slate-950 border border-slate-800 hover:border-emerald-500 font-bold text-sm rounded-xl text-slate-200 transition">₦10,000</button>
                     </div>
                     <input type="number" id="deposit-amount-input" value="5000" class="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-sm font-bold text-white focus:outline-none focus:border-emerald-500">
                 </div>
 
                 <div class="p-4 bg-slate-950 rounded-2xl border border-slate-800 text-xs text-slate-400 space-y-1">
                     <div class="flex justify-between"><span>Gateway Fee:</span> <span class="font-semibold text-slate-200">Free (Sponsored)</span></div>
-                    <div class="flex justify-between"><span>Instant Crediting:</span> <span class="font-semibold text-emerald-400">Automatic Webhook Verify</span></div>
+                    <div class="flex justify-between"><span>Database Update:</span> <span class="font-semibold text-emerald-400">Automatic Supabase Sync</span></div>
                 </div>
 
                 <button onclick="simulatePaystackPayment()" class="w-full py-3.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-xl text-sm shadow-md shadow-emerald-500/20 flex items-center justify-center gap-2 transition">
@@ -633,7 +687,7 @@
                     <i data-lucide="shopping-bag" class="w-6 h-6"></i>
                 </div>
                 <h3 class="text-xl font-bold text-white" id="purchase-modal-title">Confirm Purchase</h3>
-                <p class="text-xs text-slate-400" id="purchase-modal-desc">Review order details before placing request.</p>
+                <p class="text-xs text-slate-400" id="purchase-modal-desc">Order will be saved directly to your Supabase orders table.</p>
             </div>
 
             <div class="p-4 bg-slate-950 rounded-2xl border border-slate-800 space-y-2">
@@ -643,28 +697,26 @@
             </div>
 
             <button onclick="executePurchase()" class="w-full py-3.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-xl text-sm shadow-md shadow-emerald-500/20 transition">
-                Confirm & Place Order
+                Confirm & Save to Supabase
             </button>
         </div>
     </div>
 
-    <!-- JavaScript Application Logic -->
+    <!-- JavaScript Application Logic with Supabase Client -->
     <script>
-        // Initialize Lucide icons
-        document.addEventListener("DOMContentLoaded", () => {
-            lucide.createIcons();
-            renderVirtualNumbers();
-            renderSocialServices();
-            renderOrders();
-        });
+        // Initialize Supabase Client
+        const SUPABASE_URL = 'https://enoycuwdpqyaxwzxocdz.supabase.co';
+        const SUPABASE_ANON_KEY = 'sb_publishable_J_pxqtxqkk965jk_XBf5WA_dOxv6Ujx';
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
         // App State
-        let currentUser = null;
-        let walletBalance = 12500.00;
+        let currentSession = null;
+        let currentUserProfile = null;
         let authModeState = 'login';
         let pendingPurchaseItem = null;
+        let userOrders = [];
 
-        // Mock Data: Virtual Numbers Catalog
+        // Mock Catalogs
         const virtualNumbersData = [
             { id: 'vn-1', service: 'WhatsApp', country: 'United States', code: '+1', flag: '🇺🇸', price: 450, stock: 1420 },
             { id: 'vn-2', service: 'Telegram', country: 'United Kingdom', code: '+44', flag: '🇬🇧', price: 380, stock: 890 },
@@ -674,7 +726,6 @@
             { id: 'vn-6', service: 'Discord', country: 'United States', code: '+1', flag: '🇺🇸', price: 300, stock: 1150 }
         ];
 
-        // Mock Data: Social Marketing Services
         const socialServicesData = [
             { id: 'sm-1', category: 'Twitter', name: 'Twitter Verified Profile Followers', desc: 'Legitimate organic audience growth from active regional accounts.', price: 2500, unit: 'Per 500 Followers' },
             { id: 'sm-2', category: 'Twitter', name: 'Thread Engagement & Impressions', desc: 'Boost algorithmic visibility for announcements and product launches.', price: 1800, unit: 'Per 1,000 Views' },
@@ -683,14 +734,7 @@
             { id: 'sm-5', category: 'LinkedIn', name: 'Professional Post Reach & Impressions', desc: 'Expand B2B professional network visibility.', price: 4500, unit: 'Per 500 Impressions' },
         ];
 
-        // Mock Data: Orders History
-        let ordersData = [
-            { id: 'ORD-9821', name: 'WhatsApp Verification (+1)', target: '+1 (555) 382-9012', sms: 'OTP: 892-104', price: 450, status: 'Completed', date: 'Today, 14:20' },
-            { id: 'ORD-9812', name: 'Telegram Verification (+44)', target: '+44 (791) 442-8810', sms: 'OTP: 331-902', price: 380, status: 'Completed', date: 'Today, 11:05' },
-            { id: 'ORD-9750', name: 'Twitter Growth Campaign', target: '@johndoe_tech', sms: 'In Progress (Active 85%)', price: 2500, status: 'Pending', date: 'Yesterday' }
-        ];
-
-        // Toast notification system
+        // Toast Notification System
         function showToast(message, type = 'success') {
             const container = document.getElementById('toast-container');
             const toast = document.createElement('div');
@@ -701,26 +745,120 @@
             container.appendChild(toast);
             lucide.createIcons();
 
-            setTimeout(() => {
-                toast.classList.remove('translate-y-2', 'opacity-0');
-            }, 10);
-
+            setTimeout(() => toast.classList.remove('translate-y-2', 'opacity-0'), 10);
             setTimeout(() => {
                 toast.classList.add('translate-y-2', 'opacity-0');
                 setTimeout(() => toast.remove(), 300);
             }, 3500);
         }
 
-        // Authentication Handlers
+        // Initialize App & Auth State Listener
+        document.addEventListener("DOMContentLoaded", async () => {
+            lucide.createIcons();
+            renderVirtualNumbers();
+            renderSocialServices();
+
+            // Check existing Supabase session
+            const { data: { session } } = await supabase.auth.getSession();
+            handleAuthChange(session);
+
+            // Listen to Supabase Auth state changes
+            supabase.auth.onAuthStateChange((event, session) => {
+                handleAuthChange(session);
+            });
+        });
+
+        async function handleAuthChange(session) {
+            currentSession = session;
+            if (session) {
+                document.getElementById('auth-view').classList.add('hidden');
+                document.getElementById('dashboard-app').classList.remove('hidden');
+                await fetchUserProfileAndOrders();
+            } else {
+                document.getElementById('dashboard-app').classList.add('hidden');
+                document.getElementById('auth-view').classList.remove('hidden');
+            }
+        }
+
+        async function fetchUserProfileAndOrders() {
+            if (!currentSession) return;
+            const userId = currentSession.user.id;
+
+            // Fetch Profile
+            let { data: profile, error } = await supabase
+                .from('profiles')
+                .select('*')
+                .eq('id', userId)
+                .single();
+
+            if (error || !profile) {
+                // If profile row doesn't exist yet, create default profile row
+                const defaultName = currentSession.user.user_metadata?.name || currentSession.user.email.split('@')[0];
+                const { data: newProfile, err } = await supabase
+                    .from('profiles')
+                    .insert([{ id: userId, name: defaultName, email: currentSession.user.email, balance: 12500.00 }])
+                    .select()
+                    .single();
+                if (newProfile) currentUserProfile = newProfile;
+            } else {
+                currentUserProfile = profile;
+            }
+
+            if (currentUserProfile) {
+                const name = currentUserProfile.name || currentSession.user.email.split('@')[0];
+                document.getElementById('user-display-name').textContent = name;
+                document.getElementById('user-avatar-initials').textContent = name.substring(0, 2).toUpperCase();
+                updateWalletUI(currentUserProfile.balance);
+            }
+
+            // Fetch Orders from Supabase
+            await fetchOrders();
+        }
+
+        async function fetchOrders() {
+            if (!currentSession) return;
+            const { data: orders, error } = await supabase
+                .from('orders')
+                .select('*')
+                .eq('user_id', currentSession.user.id)
+                .order('created_at', { ascending: false });
+
+            if (orders) {
+                userOrders = orders;
+                renderOrdersTable();
+                renderRecentOrdersTable();
+                document.getElementById('orders-badge').textContent = userOrders.length;
+                document.getElementById('stat-total-orders').textContent = userOrders.length + ' Orders';
+                const activeCount = userOrders.filter(o => o.status === 'Pending').length;
+                document.getElementById('stat-active-orders').textContent = activeCount + ' Active';
+            }
+        }
+
+        // SQL Modal Controls
+        function openSqlModal() {
+            document.getElementById('sql-modal').classList.remove('hidden');
+        }
+        function closeSqlModal() {
+            document.getElementById('sql-modal').classList.add('hidden');
+        }
+        function copySqlSnippet() {
+            const code = document.querySelector('#sql-modal pre code').innerText;
+            document.execCommand('copy');
+            // fallback navigator clipboard
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(code);
+            }
+            showToast('SQL Schema copied to clipboard successfully!');
+        }
+
+        // Authentication Modal Controls
         function openAuthModal(mode) {
             setAuthMode(mode);
             document.getElementById('auth-modal').classList.remove('hidden');
         }
-
         function closeAuthModal() {
             document.getElementById('auth-modal').classList.add('hidden');
         }
-
         function setAuthMode(mode) {
             authModeState = mode;
             const loginBtn = document.getElementById('modal-tab-login');
@@ -733,44 +871,51 @@
                 loginBtn.className = "py-2 text-xs font-bold bg-slate-800 text-white rounded-xl shadow-sm transition";
                 regBtn.className = "py-2 text-xs font-bold text-slate-400 rounded-xl transition";
                 nameField.classList.add('hidden');
-                submitBtn.textContent = "Sign In to Dashboard";
-                title.textContent = "Welcome Back to Santiago Store";
+                submitBtn.textContent = "Sign In with Supabase";
+                title.textContent = "Sign In to Santiago Store";
             } else {
                 regBtn.className = "py-2 text-xs font-bold bg-slate-800 text-white rounded-xl shadow-sm transition";
                 loginBtn.className = "py-2 text-xs font-bold text-slate-400 rounded-xl transition";
                 nameField.classList.remove('hidden');
-                submitBtn.textContent = "Create Free Account";
-                title.textContent = "Create Your Santiago Store Account";
+                submitBtn.textContent = "Create Supabase Account";
+                title.textContent = "Create Your Account";
             }
         }
 
-        function handleAuthSubmit(event) {
+        async function handleAuthSubmit(event) {
             event.preventDefault();
             const email = document.getElementById('auth-email').value;
-            const nameInput = document.getElementById('auth-name').value;
-            const name = authModeState === 'register' && nameInput ? nameInput : email.split('@')[0];
+            const password = document.getElementById('auth-password').value;
+            const name = document.getElementById('auth-name').value || email.split('@')[0];
 
-            currentUser = { email, name };
-            document.getElementById('user-display-name').textContent = name;
-            document.getElementById('user-avatar-initials').textContent = name.substring(0, 2).toUpperCase();
-
-            closeAuthModal();
-            document.getElementById('auth-view').classList.add('hidden');
-            document.getElementById('dashboard-app').classList.remove('hidden');
-            showToast(`Welcome back, ${name}!`);
+            if (authModeState === 'register') {
+                const { data, error } = await supabase.auth.signUp({
+                    email,
+                    password,
+                    options: { data: { name } }
+                });
+                if (error) {
+                    showToast(error.message, 'error');
+                } else {
+                    showToast('Account created successfully! Check your email or sign in.');
+                    closeAuthModal();
+                }
+            } else {
+                const { data, error } = await supabase.auth.signInWithPassword({
+                    email,
+                    password
+                });
+                if (error) {
+                    showToast(error.message, 'error');
+                } else {
+                    showToast('Signed in successfully via Supabase Auth!');
+                    closeAuthModal();
+                }
+            }
         }
 
-        function loginAsDemo() {
-            currentUser = { email: 'john@example.com', name: 'John Doe' };
-            document.getElementById('auth-view').classList.add('hidden');
-            document.getElementById('dashboard-app').classList.remove('hidden');
-            showToast('Logged into Live Demo successfully!');
-        }
-
-        function logout() {
-            currentUser = null;
-            document.getElementById('dashboard-app').classList.add('hidden');
-            document.getElementById('auth-view').classList.remove('hidden');
+        async function handleSignOut() {
+            await supabase.auth.signOut();
             showToast('Signed out successfully.', 'info');
         }
 
@@ -784,13 +929,9 @@
 
         function switchTab(tabId, event) {
             if (event) event.preventDefault();
-
-            // Hide all tabs
             document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
-            // Show selected tab
             document.getElementById(`tab-${tabId}`).classList.remove('hidden');
 
-            // Update sidebar active classes
             document.querySelectorAll('.nav-link').forEach(el => {
                 el.classList.remove('text-emerald-400', 'bg-emerald-500/10', 'border', 'border-emerald-500/20');
                 el.classList.add('text-slate-400', 'hover:text-white', 'hover:bg-slate-800/60');
@@ -801,20 +942,18 @@
                 activeLink.classList.add('text-emerald-400', 'bg-emerald-500/10', 'border', 'border-emerald-500/20');
             }
 
-            // Update header title
             const titles = {
                 'overview': ['Dashboard Overview', 'Welcome back! Here is your active digital service summary.'],
                 'virtual-numbers': ['Virtual Number Store', 'Rent instant SMS verification numbers securely.'],
                 'social-marketing': ['Social Growth Services', 'Legitimate marketing campaigns and follower boost.'],
-                'orders': ['Orders History & OTP', 'Track your previous purchases and incoming SMS codes.'],
-                'settings': ['API & Gateway Settings', 'Manage your Paystack keys and supplier API connections.']
+                'orders': ['Orders History & OTP', 'Track your previous purchases and incoming SMS codes in Supabase.'],
+                'settings': ['Supabase Configuration', 'Manage your Supabase URL and SQL database schema.']
             };
             if (titles[tabId]) {
                 document.getElementById('page-title').textContent = titles[tabId][0];
                 document.getElementById('page-subtitle').textContent = titles[tabId][1];
             }
 
-            // Close mobile menu if open
             if (window.innerWidth < 1024) {
                 const sidebar = document.getElementById('sidebar');
                 if (!sidebar.classList.contains('-translate-x-full')) {
@@ -823,43 +962,53 @@
             }
         }
 
-        // Wallet & Paystack Simulation
+        // Wallet Top-up & Paystack Simulation
         function openFundWalletModal() {
             document.getElementById('fund-wallet-modal').classList.remove('hidden');
         }
-
         function closeFundWalletModal() {
             document.getElementById('fund-wallet-modal').classList.add('hidden');
         }
-
         function setDepositAmount(amount) {
             document.getElementById('deposit-amount-input').value = amount;
             document.getElementById('pay-amount-label').textContent = amount.toLocaleString();
         }
 
-        function simulatePaystackPayment() {
+        async function simulatePaystackPayment() {
             const amount = parseFloat(document.getElementById('deposit-amount-input').value) || 5000;
-            walletBalance += amount;
-            updateWalletUI();
-            closeFundWalletModal();
-            showToast(`Successfully credited ₦${amount.toLocaleString()} via Paystack!`);
+            if (!currentUserProfile) return;
+            const newBalance = (currentUserProfile.balance || 0) + amount;
 
-            // Add deposit order record
-            ordersData.unshift({
-                id: 'DEP-' + Math.floor(1000 + Math.random() * 9000),
-                name: 'Wallet Deposit (Paystack)',
-                target: 'Direct Card Funding',
-                sms: 'Verified Webhook',
-                price: amount,
-                status: 'Completed',
-                date: 'Just now'
-            });
-            renderOrders();
-            renderRecentOrders();
+            // Update in Supabase profiles table
+            const { error } = await supabase
+                .from('profiles')
+                .update({ balance: newBalance })
+                .eq('id', currentSession.user.id);
+
+            if (error) {
+                showToast('Failed to update wallet in Supabase: ' + error.message, 'error');
+            } else {
+                currentUserProfile.balance = newBalance;
+                updateWalletUI(newBalance);
+                closeFundWalletModal();
+                showToast(`Successfully credited ₦${amount.toLocaleString()} via Paystack!`);
+
+                // Log deposit order
+                await supabase.from('orders').insert([{
+                    user_id: currentSession.user.id,
+                    order_number: 'DEP-' + Math.floor(1000 + Math.random() * 9000),
+                    service_name: 'Wallet Deposit (Paystack)',
+                    target_info: 'Direct Card Funding',
+                    sms_otp: 'Verified Webhook',
+                    price: amount,
+                    status: 'Completed'
+                }]);
+                await fetchOrders();
+            }
         }
 
-        function updateWalletUI() {
-            const formatted = '₦' + walletBalance.toLocaleString('en-NG', { minimumFractionDigits: 2 });
+        function updateWalletUI(balance) {
+            const formatted = '₦' + balance.toLocaleString('en-NG', { minimumFractionDigits: 2 });
             document.getElementById('sidebar-wallet-balance').textContent = formatted;
             document.getElementById('mobile-wallet-balance').textContent = formatted;
             document.getElementById('stat-wallet').textContent = formatted;
@@ -900,11 +1049,10 @@
         function filterNumbers() {
             const query = document.getElementById('number-search').value.toLowerCase();
             const country = document.getElementById('country-filter').value;
-
             const filtered = virtualNumbersData.filter(item => {
                 const matchesQuery = item.service.toLowerCase().includes(query) || item.country.toLowerCase().includes(query);
                 const matchesCountry = country === 'all' || item.code === (country === 'US' ? '+1' : country === 'UK' ? '+44' : country === 'CA' ? '+1' : country === 'NG' ? '+234' : '+49');
-                return matchesQuery;
+                return matchesQuery && matchesCountry;
             });
             renderVirtualNumbers(filtered);
         }
@@ -945,9 +1093,10 @@
             renderSocialServices(cat);
         }
 
-        // Purchase Modal Flow
+        // Purchase Modal & Supabase Order Placement
         function initiatePurchase(itemName, price) {
-            if (walletBalance < price) {
+            const currentBal = currentUserProfile ? currentUserProfile.balance : 0;
+            if (currentBal < price) {
                 showToast('Insufficient wallet balance. Please fund your wallet first.', 'error');
                 openFundWalletModal();
                 return;
@@ -955,7 +1104,7 @@
             pendingPurchaseItem = { name: itemName, price: price };
             document.getElementById('p-item-name').textContent = itemName;
             document.getElementById('p-item-price').textContent = '₦' + price.toLocaleString();
-            document.getElementById('p-item-balance').textContent = '₦' + (walletBalance - price).toLocaleString();
+            document.getElementById('p-item-balance').textContent = '₦' + (currentBal - price).toLocaleString();
             document.getElementById('purchase-modal').classList.remove('hidden');
         }
 
@@ -964,42 +1113,65 @@
             pendingPurchaseItem = null;
         }
 
-        function executePurchase() {
-            if (!pendingPurchaseItem) return;
-            walletBalance -= pendingPurchaseItem.price;
-            updateWalletUI();
+        async function executePurchase() {
+            if (!pendingPurchaseItem || !currentUserProfile) return;
+            const newBalance = currentUserProfile.balance - pendingPurchaseItem.price;
 
-            const newOrder = {
-                id: 'ORD-' + Math.floor(1000 + Math.random() * 9000),
-                name: pendingPurchaseItem.name,
-                target: '+1 (' + Math.floor(200 + Math.random() * 800) + ') ' + Math.floor(100 + Math.random() * 900) + '-' + Math.floor(1000 + Math.random() * 9000),
-                sms: 'Waiting for OTP...',
-                price: pendingPurchaseItem.price,
-                status: 'Pending',
-                date: 'Just now'
-            };
+            // 1. Deduct balance in Supabase profiles
+            const { error: profileError } = await supabase
+                .from('profiles')
+                .update({ balance: newBalance })
+                .eq('id', currentSession.user.id);
 
-            ordersData.unshift(newOrder);
-            renderOrders();
-            renderRecentOrders();
-            closePurchaseModal();
-            showToast(`Successfully ordered ${pendingPurchaseItem.name}!`);
+            if (profileError) {
+                showToast('Error updating wallet: ' + profileError.message, 'error');
+                return;
+            }
+
+            // 2. Insert order into Supabase orders table
+            const targetPhone = '+1 (' + Math.floor(200 + Math.random() * 800) + ') ' + Math.floor(100 + Math.random() * 900) + '-' + Math.floor(1000 + Math.random() * 9000);
+            const { error: orderError } = await supabase
+                .from('orders')
+                .insert([{
+                    user_id: currentSession.user.id,
+                    order_number: 'ORD-' + Math.floor(1000 + Math.random() * 9000),
+                    service_name: pendingPurchaseItem.name,
+                    target_info: targetPhone,
+                    sms_otp: 'Waiting for OTP...',
+                    price: pendingPurchaseItem.price,
+                    status: 'Pending'
+                }]);
+
+            if (orderError) {
+                showToast('Error creating order: ' + orderError.message, 'error');
+            } else {
+                currentUserProfile.balance = newBalance;
+                updateWalletUI(newBalance);
+                closePurchaseModal();
+                showToast(`Successfully purchased ${pendingPurchaseItem.name}! Saved to Supabase.`);
+                await fetchOrders();
+            }
         }
 
-        // Orders Table Renderers
-        function renderOrders(filterStatus = 'all') {
+        // Render Orders Tables from Supabase Data
+        function renderOrdersTable(filterStatus = 'all') {
             const tableBody = document.getElementById('full-orders-table');
             tableBody.innerHTML = '';
-            const list = filterStatus === 'all' ? ordersData : ordersData.filter(o => o.status === filterStatus);
+            const list = filterStatus === 'all' ? userOrders : userOrders.filter(o => o.status === filterStatus);
+
+            if (list.length === 0) {
+                tableBody.innerHTML = `<tr><td colspan="7" class="py-6 text-center text-slate-500 text-xs">No orders found in Supabase database.</td></tr>`;
+                return;
+            }
 
             list.forEach(ord => {
                 const row = document.createElement('tr');
                 row.className = "hover:bg-slate-800/40 transition";
                 row.innerHTML = `
-                    <td class="py-4 font-semibold text-white">${ord.id}</td>
-                    <td class="py-4 font-medium text-slate-200">${ord.name}</td>
-                    <td class="py-4 text-slate-400 font-mono text-xs">${ord.target}</td>
-                    <td class="py-4 text-emerald-400 font-semibold text-xs">${ord.sms}</td>
+                    <td class="py-4 font-semibold text-white">${ord.order_number}</td>
+                    <td class="py-4 font-medium text-slate-200">${ord.service_name}</td>
+                    <td class="py-4 text-slate-400 font-mono text-xs">${ord.target_info}</td>
+                    <td class="py-4 text-emerald-400 font-semibold text-xs">${ord.sms_otp}</td>
                     <td class="py-4 font-bold text-white">₦${ord.price.toLocaleString()}</td>
                     <td class="py-4">
                         <span class="px-2.5 py-1 rounded-full text-xs font-bold ${ord.status === 'Completed' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'}">
@@ -1007,27 +1179,32 @@
                         </span>
                     </td>
                     <td class="py-4 text-right">
-                        <button onclick="showToast('Order details refreshed successfully.')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700">
+                        <button onclick="showToast('Order synced with Supabase successfully.')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700">
                             Details
                         </button>
                     </td>
                 `;
                 tableBody.appendChild(row);
             });
-            document.getElementById('orders-badge').textContent = ordersData.length;
-            renderRecentOrders();
         }
 
-        function renderRecentOrders() {
+        function renderRecentOrdersTable() {
             const tableBody = document.getElementById('recent-orders-table');
             tableBody.innerHTML = '';
-            ordersData.slice(0, 3).forEach(ord => {
+            const recent = userOrders.slice(0, 3);
+
+            if (recent.length === 0) {
+                tableBody.innerHTML = `<tr><td colspan="6" class="py-4 text-center text-slate-500 text-xs">No recent orders. Place your first order!</td></tr>`;
+                return;
+            }
+
+            recent.forEach(ord => {
                 const row = document.createElement('tr');
                 row.className = "hover:bg-slate-800/40 transition";
                 row.innerHTML = `
-                    <td class="py-3.5 font-semibold text-white">${ord.id}</td>
-                    <td class="py-3.5 font-medium text-slate-200">${ord.name}</td>
-                    <td class="py-3.5 text-slate-400 font-mono text-xs">${ord.target}</td>
+                    <td class="py-3.5 font-semibold text-white">${ord.order_number}</td>
+                    <td class="py-3.5 font-medium text-slate-200">${ord.service_name}</td>
+                    <td class="py-3.5 text-slate-400 font-mono text-xs">${ord.target_info}</td>
                     <td class="py-3.5 font-bold text-white">₦${ord.price.toLocaleString()}</td>
                     <td class="py-3.5">
                         <span class="px-2.5 py-1 rounded-full text-xs font-bold ${ord.status === 'Completed' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'}">
@@ -1040,10 +1217,6 @@
                 `;
                 tableBody.appendChild(row);
             });
-        }
-
-        function saveSettings() {
-            showToast('API & Paystack gateway configuration saved successfully!');
         }
     </script>
 </body>
