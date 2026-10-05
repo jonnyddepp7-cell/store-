@@ -110,7 +110,7 @@ create policy "Users can view own orders." on public.orders for select using (au
 create policy "Users can insert own orders." on public.orders for insert with check (auth.uid() = user_id);
 
 -- 4. Trigger to auto-create profile on signup
-create or function public.handle_new_user()
+create or replace function public.handle_new_user()
 returns trigger as $$
 begin
   insert into public.profiles (id, name, email, balance)
@@ -134,7 +134,6 @@ create or replace trigger on_auth_user_created
         </div>
     </div>
 
-    <!-- AUTH / LANDING WRAPPER (Shown when logged out) -->
     <div id="auth-view" class="min-h-screen flex flex-col justify-between bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950">
         <!-- Top Nav -->
         <header class="w-full max-w-7xl mx-auto px-6 py-5 flex items-center justify-between">
@@ -233,7 +232,6 @@ create or replace trigger on_auth_user_created
         </footer>
     </div>
 
-    <!-- DASHBOARD APP WRAPPER (Shown when logged in) -->
     <div id="dashboard-app" class="hidden min-h-screen flex flex-col lg:flex-row bg-slate-950">
         
         <!-- Mobile Header Bar -->
@@ -346,7 +344,6 @@ create or replace trigger on_auth_user_created
                 </div>
             </header>
 
-            <!-- Content Container -->
             <div class="p-6 lg:p-8 flex-1 max-w-7xl w-full mx-auto">
                 
                 <!-- TAB 1: OVERVIEW -->
@@ -535,9 +532,9 @@ create or replace trigger on_auth_user_created
                                 <p class="text-xs text-slate-400">Review your past virtual number purchases and incoming SMS OTP codes retrieved from Supabase.</p>
                             </div>
                             <div class="flex gap-2">
-                                <button onclick="renderOrders('all')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl border border-slate-700">All</button>
-                                <button onclick="renderOrders('Pending')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl border border-slate-700">Pending</button>
-                                <button onclick="renderOrders('Completed')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl border border-slate-700">Completed</button>
+                                <button onclick="renderOrdersTable('all')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl border border-slate-700">All</button>
+                                <button onclick="renderOrdersTable('Pending')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl border border-slate-700">Pending</button>
+                                <button onclick="renderOrdersTable('Completed')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl border border-slate-700">Completed</button>
                             </div>
                         </div>
 
@@ -702,7 +699,6 @@ create or replace trigger on_auth_user_created
         </div>
     </div>
 
-    <!-- JavaScript Application Logic with Supabase Client -->
     <script>
         // Initialize Supabase Client
         const SUPABASE_URL = 'https://enoycuwdpqyaxwzxocdz.supabase.co';
@@ -844,7 +840,6 @@ create or replace trigger on_auth_user_created
         function copySqlSnippet() {
             const code = document.querySelector('#sql-modal pre code').innerText;
             document.execCommand('copy');
-            // fallback navigator clipboard
             if (navigator.clipboard) {
                 navigator.clipboard.writeText(code);
             }
